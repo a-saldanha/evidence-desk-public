@@ -1,0 +1,5 @@
+# One line per user: <username> <bcrypt hash>. Create a hash with:
+#   docker run --rm caddy:2.8 caddy hash-password --plaintext 'a-long-password'
+# then save this file as deploy/users.caddy
+alan $2a$14$REPLACE_WITH_HASH
+reviewer $2a$14$REPLACE_WITH_HASH

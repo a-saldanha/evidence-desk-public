@@ -1,0 +1,29 @@
+# One server, two containers: the app (never exposed directly) and Caddy (HTTPS + login).
+#   cp deploy/.env.example deploy/.env   # fill in keys and domain
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: .env
+    volumes:
+      - evidence-data:/data          # cases, caches, graphs, ledgers: back this volume up
+    restart: unless-stopped
+    expose: ["8501"]                 # reachable only through caddy
+
+  caddy:
+    image: caddy:2.8
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./users.caddy:/etc/caddy/users.caddy:ro
+      - caddy-data:/data             # TLS certificates
+    depends_on: [app]
+    restart: unless-stopped
+
+volumes:
+  evidence-data:
+  caddy-data:

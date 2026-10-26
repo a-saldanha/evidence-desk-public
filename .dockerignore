@@ -1,0 +1,8 @@
+data
+case
+**/__pycache__
+deploy/.env
+deploy/users.caddy
+raw_dump
+.env
+.venv

@@ -1,0 +1,11 @@
+[server]
+headless = true
+maxUploadSize = 200          # MB per file; mbox exports can be large
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2F5D8A"

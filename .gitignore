@@ -1,0 +1,12 @@
+.DS_Store
+data/
+case/
+showcase/
+raw_dump/
+.env
+.venv/
+.spend_ledger.json
+deploy/.env
+deploy/users.caddy
+__pycache__/
+*.pyc

@@ -1,0 +1,11 @@
+# Automatic HTTPS for {$DOMAIN}. Use DOMAIN=localhost for a local trial (self-signed certificate).
+{$DOMAIN} {
+	encode gzip
+	basic_auth {
+		import /etc/caddy/users.caddy
+	}
+	reverse_proxy app:8501 {
+		# the app scopes all data by this header; Caddy overwrites any value a client sends
+		header_up X-Auth-User {http.auth.user.id}
+	}
+}

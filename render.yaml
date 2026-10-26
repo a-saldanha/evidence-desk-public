@@ -1,0 +1,25 @@
+# Render Blueprint: free Docker web service running the showcase.
+# Render dashboard → New → Blueprint → pick this repo; fill in the secret values when asked.
+services:
+  - type: web
+    name: evidence-desk
+    runtime: docker
+    plan: free
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: EVIDENCE_PASSWORD          # what you give reviewers
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLAMA_CLOUD_API_KEY        # needed to read the spreadsheet screenshot live
+        sync: false
+      - key: EVIDENCE_DATA_DIR
+        value: /data
+      - key: EVIDENCE_BUDGET_USD        # hard cap on live LLM spend per month
+        value: "5"
+      - key: EVIDENCE_MAX_FILES
+        value: "80"
+      - key: EVIDENCE_MASK_UI
+        value: "1"
