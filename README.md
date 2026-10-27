@@ -1,183 +1,122 @@
-# Evidence ingestion — layer 1 (ingest, normalise, QC)
+# Evidence Desk
 
-Turns a messy dump (Gmail Takeout `.mbox`, single `.eml` downloads, WhatsApp `_chat.txt`, PDFs, receipts,
-tickets, calendar invites) into **citable units** plus a **quality report**, before any LLM extraction runs.
+**Reconstruct an event from a series of available sources.** Here "event" doesn't necessarily mean a single event. It is an umbrella term for a long-running task made up of many smaller tasks that happen in parallel, in sequence, or at no particular interval.
 
+Examples of this can be seen in many settings (these are actual problems I discussed with real people):
+
+1. Went on a trip last month and needed to sort out smaller details about costs and transactions made spontaneously during the trip. These weren't organised in one place; they were spread across several chats and emails.
+2. Travelling to conferences involves many parties, from booking to planning and orchestrating different activities, while the situation keeps changing. This leads to conflicts between the planned itinerary and what actually took place.
+3. In larger companies, buying goods follows a process called a Service Order Request. Several parties communicate to find the best goods at the best price while following legal procedure, so a trail must be kept. But the communication rarely happens in one medium.
+
+## The idea
+
+- In all the above cases, we have heaps of data in the form of emails, chats, PDFs, Excel files and so on. These are all different pieces of evidence centred around a certain topic or person.
+- We turn that pile into a timeline you can check. It extracts events, ties them to source documents, works out the dates in a fixed, methodical way, and then finds the gaps and conflicts between the evidence and the planned tasks, to understand how the entire event unfolded.
+- In the deployed page, an entire conference journey is presented. It contains the following kinds of data:
+  - `.eml` files from Outlook
+  - `.mbox` files from Google Takeout (bulk mail)
+  - `.txt` files from WhatsApp chats
+  - PDF files from mail attachments, registrations and confirmations
+  - Images, including screenshots
+
+## How it works
+
+### Preprocessing
+
+- The data is preprocessed systematically and ingested. This involves understanding how temporal data such as dates is handled, while also removing waste content such as email headers, so that garbage doesn't get through and hallucinations don't propagate forward.
+- We handle the following problems during preprocessing:
+  - Eliminating duplicates from both chats and emails. This covers the same email shared across different email IDs, as well as emails that have both email IDs as recipients.
+  - An email thread may be missing its original emails. These get flagged.
+  - Lost chat messages that slipped through but are referenced in newer messages get flagged.
+  - Attachments mentioned in emails but not uploaded.
+  - Attachments present only as placeholders in chat backups.
+  - Timezone mismatches in chats, from messaging between international parties.
+  - And multiple other aspects.
+
+### Extraction
+
+- The data is then sent to an external LLM, but only after sensitive details like passwords and card numbers are masked. The model has one job here: read the text and pull out events, who was involved, where, and what the text says about time. Along with every event, it must return the exact sentence it got it from.
+- Every quote the model returns is searched for again in the original source. If the quote can't be found, it is dropped, and an event with no quote left is flagged for a human to check. This way every event on the timeline points to a real line in a real document.
+- Dates are never worked out by the model. It only reports what the text says ("yesterday", "next Friday", "16-07-2026"), and our code converts that into an actual date based on when the message was sent. The same input always gives the same date.
+- Some data doesn't need a model at all. Itineraries made as tables (Excel sheets or screenshots of a schedule) are read directly by code, row by row.
+
+### People and the graph
+
+- The same person often appears under different names: a full name in email, a nickname in a phone contact, a different address for work. We only merge people automatically when they share an email address or phone number. Everything else is suggested, and the user decides.
+- Everything is then stored as a graph of people, events and the evidence behind each one.
+
+### Finding gaps and conflicts
+
+- This is where the gaps and conflicts come out. For every planned or scheduled task, we look for evidence from a *different* source about the same time and the same people. The model then judges whether the plan was **confirmed**, **modified** or **contradicted**, quoting both sides. For example: the itinerary says a presentation was on the 16th at 2 PM, but a chat message the next day says the speaker was ill "yesterday" and it never happened.
+- No verdict is final until a human accepts or rejects it. The system brings the evidence; the person decides.
+- Finally, you can ask questions in plain language ("Did the outing happen on the planned date?"), and every answer comes with links to the exact messages it is based on.
+- Cost is kept under control throughout: there is an estimate before anything paid runs, a hard spending limit, and every model response is saved, so nothing is paid for twice.
+
+## Limitations
+
+There are certain limitations we can work on further:
+
+- It works best when there is a plan to check against. A long chain of updates about the same thing (an order delayed twice, a meeting moved three times) is shown on the timeline but not yet tracked as one story with each change linked.
+- It is built for one person's or one team's records at a time, not a whole company's systems.
+
+The reasoning behind each design choice, the alternatives considered and what was left out are in [decisions.md](decisions.md).
+
+## Trying it out
+
+### The quickest way: the deployed demo
+
+**Live demo: [evidence-desk-8ji6.onrender.com](https://evidence-desk-8ji6.onrender.com/)** (password shared separately)
+
+Open the link, enter the password, and you will find an entire sample case loaded to view. Start at **Data quality** to see what was wrong with the raw files, then go through **People**, **Timeline** and **Insights**, and finally ask a question on the **Ask** page. You can also upload a file of your own; only the new file gets processed.
+
+The demo runs on a free server that sleeps when no one is using it, so the first visit can take up to a minute to load. After that it responds normally.
+
+### Running it on your own machine
+
+- You need Python 3.12 and `pdftotext`, which comes with poppler (`brew install poppler` on Mac, `apt install poppler-utils` on Linux).
+- Get the code and install what it needs:
+
+  ```bash
+  git clone https://github.com/a-saldanha/evidence-desk-public.git
+  cd evidence-desk-public
+  pip install -r requirements.txt
+  ```
+
+- **Check that everything works, without any API keys.** These tests use a fake model, so they cost nothing:
+
+  ```bash
+  python -m tests.test_temporal
+  python -m tests.test_grid_html
+  python -m tests.test_resilience
+  python -m tests.test_unfamiliar_files
+  ```
+
+- **Open the app without spending anything.** This runs the whole interface with a simulated model, and a banner at the top reminds you that the results aren't real:
+
+  ```bash
+  EVIDENCE_LLM=scripted streamlit run app/streamlit_app.py
+  ```
+
+- **Use it on your real files.** Add your keys to a `.env` file: an Anthropic key, plus a LlamaParse key if you have scanned PDFs or screenshots.
+
+  ```bash
+  cp .env.example .env        # then fill in the keys
+  set -a; source .env; set +a
+  streamlit run app/streamlit_app.py
+  ```
+
+  In the app, create a case, enter your name, the nicknames and email addresses you use (so the system knows which person is "you"), and the timezone of your chat exports. Then upload your files and click **Process everything**.
+
+- Before anything paid runs, you see an estimate of the cost. A hard spending limit is set in `.env` (`EVIDENCE_MAX_SPEND_USD`), and every model response is saved, so if something stops halfway you can run it again without paying twice.
+
+### Prefer the command line?
+
+The same pipeline runs without the app:
+
+```bash
+python -m reason.run ./my_files --case ./case --self-name "Your Name" \
+       --self-alias "Nickname" --self-email you@example.com --chat-tz 5.5
+python -m reason.run --case ./case --self-name "Your Name" --ask "Did the meeting on the 16th happen?"
 ```
-pip install -r requirements.txt
-export LLAMA_CLOUD_API_KEY=llx-...            # omit (or pass --offline) to use PDF text layers only
-python -m ingest.pipeline ./dump --out ./ingest_out \
-       --chat-alias 'Jane=jane.smith@example.com' --chat-tz 5.5
-```
 
-## Design rules
-
-1. **Files are identified by bytes, not names.** Everything is SHA-256 addressed and copied untouched into
-   `raw/`. Identical files collapse into one source with aliases (the uploaded `visa_invitation.pdf` is the
-   same file as the attachment inside the mbox). Type is sniffed from content, so a misleading filename
-   doesn't matter.
-2. **LLMs don't parse structure that already has a spec.** Email headers, MIME, threading IDs, chat
-   timestamps and ICS are parsed with deterministic code. LlamaParse is used where layout matters: PDFs,
-   scans, photos, receipts.
-3. **Nothing is deleted, only separated.** Quotes, forwards, signatures and gateway banners are removed from
-   the text the LLM sees, but each unit keeps `raw_text` and a `Locator` (file hash + message index /
-   Message-ID / line range / page + char offsets). That locator is the citation.
-4. **Uncertainty is recorded, never guessed away.** Every timestamp carries `exact | assumed_tz | ambiguous | none`;
-   currencies keep the raw string (`$` is stored as `USD?`); quoted copies are marked `reconstructed_from_quote`.
-
-## Parsers
-
-| Input | How | Notable handling |
-|---|---|---|
-| `.mbox` / `.eml` | stdlib `email` (policy=default) | Gmail labels + `X-GM-THRID`; text/plain preferred, HTML fallback; reply/forward/Outlook header splitting; Exchange "external sender" banners stripped; website contact-form relays (`wordpress@…`) re-attributed to the real sender; attachments re-enter the pipeline as their own sources; inline calendar invites parsed |
-| WhatsApp | regex, iOS and Android formats | DD/MM vs MM/DD inferred from the whole file; no timezone in exports so a configured offset is applied and flagged; multi-line messages; calls, deleted/edited, system lines, `… omitted` media placeholders |
-| PDF / image | **LlamaParse v2** (`llama-cloud` SDK) + `pdftotext` witness | Tier routing (text-layer PDFs → `cost_effective`, scans/photos → `agentic`); results cached by hash+tier+version (re-runs are free); per-page confidence; page header/footer kept separately; page-level document-type hints and segmentation (one PDF can hold several documents) |
-
-Use `--llamaparse-version 2026-xx-xx` to pin a dated tier version once you go beyond the demo, so parses stay reproducible.
-
-## QC checks (`qc.py`)
-
-Duplicates (identical files, same Message-ID in `.eml` and mbox, quoted/forwarded copies of emails we already
-have) · missing thread parents and whether the quote preserves them · lost messages recovered from quotes,
-clustered so one missing email quoted in four replies is reported once · attachments mentioned but absent ·
-chat media exported as placeholders, deletions, long silences, assumed timezone, undecidable date order ·
-parser health: LlamaParse page failures, low confidence, and **numeric cross-check against the PDF text layer**
-(flags pages where amounts/codes were dropped) · mixed DD/MM and MM/DD in one file · ambiguous dates ·
-multi-document PDFs · currency inventory and bare `$` · passwords/cards/keys to mask before data leaves the
-machine (incl. passport numbers and dates of birth in form layouts) · identity merge candidates and Gmail dot-variants ·
-**resent vs revised notices** (same sender + subject: identical text is a resend; changed `Field: value` lines
-are reported as old → new and the older email is marked `superseded`) · **plans vs records** (itineraries with
-"assumed / verify / forecast" wording are flagged `forward_looking`) · image-only pages that need OCR ·
-document boundaries inside one PDF (type change or "1 / N" page-number restart) · WhatsApp attachments linked
-to files in the dump (who shared what, when) and documents referenced in chats but missing · out-of-order chat
-lines · greetings that don't fit the export clock (a hint the sender was in another timezone).
-
-## Outputs
-
-`sources.json`, `units.jsonl` (input to layer 2), `qc_issues.jsonl`, `qc_report.md`, `raw/`, `parse_cache/`.
-
-Layer 2 should skip units flagged `duplicate` or `copy_of_existing` for extraction (they remain valid
-alternate citations), treat `only_surviving_copy` units as lower-confidence evidence, and mask
-`sensitive_spans` before calling external models.
-
-## Known limits / next steps
-
-Outlook `.msg` is detected but needs `extract-msg`; Android WhatsApp "with media" zips need unzip + linking of
-`<attached: …>` files; image-only inputs need an API key; the document-type cues in `document_parser.py`
-are a stopgap for an LLM classifier.
-
----
-
-# Layers 2–4: extraction, knowledge graph, reasoning
-
-```
-export ANTHROPIC_API_KEY=...                       # LLAMA_CLOUD_API_KEY too, for screenshots/scans
-python -m reason.run ./uploads --case ./case --self-name "Jane Smith" --self-alias "Jane" \
-       --self-email jane.smith@example.com --self-email jane.smith@university.edu
-python -m reason.run --case ./case --self-name "Jane Smith" --ask "Did I attend Dhanunjaya's presentation?"
-streamlit run app/streamlit_app.py                 # the demo UI
-```
-
-| Layer | Module | LLM? | What it does |
-|---|---|---|---|
-| 2 | `reason/extract.py` | yes | Units → windows (one email / ~40 chat messages / one document segment) with `[m12]`/`[p2]` tags. A forced tool call returns events with a **status** (planned, scheduled, happened, cancelled, reported_state), participants, place, *what the text says about time*, and verbatim quotes. Sensitive spans are masked before sending. |
-| 2 | `reason/temporal.py` | no | Resolves "yesterday", "on Saturday", "16-07-2026", "11Sep2026" against the timestamp of the unit the quote came from. The LLM never computes dates. |
-| 2 | `reason/grid.py` | no | Time-grid itineraries (xlsx or a screenshot parsed to a markdown table) → planned events; consecutive cells merged, TIME GAIN/LOST treated as clock shifts, "?" = tentative, "X Sir / Y Ma'am" = participant. |
-| 2 | grounding (`extract.ground`) | no | Every quote is re-found in the source (exact → normalised → fuzzy ≥ 88). Unfindable quotes are dropped. |
-| 3 | `reason/entities.py` | no | Auto-merge only on shared identifiers / configured self aliases; everything else becomes a scored proposal for a human. Decisions persist in `decisions.json`. |
-| 3 | `reason/store.py` | no | SQLite graph: entities, events, evidence spans, participants, merge proposals, insights + review status. |
-| 4 | `reason/reconcile.py` | yes | For every planned/scheduled event: gather overlapping evidence from *other* sources about the same people, ask a narrow judge (confirmed / contradicted / modified), re-verify its quotes. |
-| 4 | `reason/query.py` | yes | BM25 + date retrieval over events and units; answers may only cite shown blocks; citations re-verified. |
-
-## Tested here (and what wasn't)
-
-`python -m tests.test_end_to_end <uploads> <case>` runs everything on the real files with two clearly
-simulated parts: the LlamaParse output for the itinerary screenshot (`tests/fixture_itinerary_grid.py`) and the
-LLM (`ScriptedClient`). The real deterministic machinery then does the work: grid → 36 planned events, "yesterday"
-in the 17 Sep 21:52 message → 16 Sep, candidate retrieval for "Dhanunjay Sir Presentation" (16 Sep 14:00) returns
-the illness report and the missed meeting from `_chat_3.txt`, the citation is re-located at line 42, and the UI
-renders the insight with highlighted quotes. Real model quality (recall of events, judge calibration) can only be
-measured with an API key: run it, then review a sample of events and insights by hand.
-
-## Demo script (≈6 minutes)
-
-1. **Upload**: drop the case folder minus the itinerary screenshot (pre-processed, cached). Show layer 1's QC:
-   duplicates, recovered quotes, mixed date formats, missing chat media, sensitive data.
-2. **People**: accept "Dhanunjay ≟ Dhanunjaya", reject "Saranya ≟ Murali" (same institute, different people).
-3. **Live**: upload the itinerary screenshot, run the layers; only the new file costs time.
-4. **Timeline**: planned lane vs happened/reported lanes.
-5. **Insights**: the Dhanunjaya contradiction with both sources highlighted; accept it.
-6. **Ask**: "Did I attend Dhanunjaya's presentation?"; answer with a clickable citation.
-
-## Costs
-
-`python -c "from reason.costs import estimate; ..."` (also printed by `reason.run` before layer 2) estimates spend
-from the real windows without calling the API; `AnthropicClient.cost_usd()` reports actual spend from usage.
-For this case (1,214 units → 86 extraction windows, ≈200k input tokens) the estimate is ≈ $2 at low effort,
-≈ $5 at high effort, about half with the Batch API for pre-processing. Output tokens (including thinking) are
-5× the input price and dominate, so effort, lean JSON and short quotes are the main levers.
-The client sends `thinking: between_tools` + `effort: low` for extraction, caches the system prompt and tool
-schema, and uses strict tool use with `tool_choice: auto` (Sonnet 5.5 rejects forced tool choice).
-
----
-
-# Demo deployment
-
-One server (any small VM with Docker: 2 vCPU / 4 GB is plenty), two containers: the app and Caddy, which
-provides HTTPS and the login. The app port is never exposed directly.
-
-```
-cp deploy/.env.example deploy/.env                    # API keys, domain, budget
-docker run --rm caddy:2.8 caddy hash-password --plaintext 'long-password'   # once per user
-cp deploy/users.caddy.example deploy/users.caddy      # paste "<user> <hash>" lines
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
-```
-Point the domain's DNS at the server first; Caddy then gets a certificate automatically. For a local trial use
-`DOMAIN=localhost`.
-
-**What a user gets**: their own cases (data is scoped by the login, `DATA_DIR/users/<user>/cases/<case>`);
-uploads of .eml/.mbox/.txt/.pdf/.png/.xlsx and WhatsApp *zip* exports (unpacked safely, media linked to chat
-lines); "Process everything" runs as a background worker, so the page can be reloaded or closed; data
-quality, people review, timeline, insight review, cited Q&A; settings; export of results; removal of single
-files and permanent case deletion (uploads, parses, model cache, graph, logs).
-
-**Guards**: per-user monthly LLM budget (a job whose estimate exceeds the remainder is refused; actual spend
-from token usage is recorded in `ledger.json`); one job per case; upload count and zip-size limits; path
-sanitising; a read-only showcase login (`EVIDENCE_DEMO_USER`) for reviewers.
-
-**Before presenting**: seed the showcase case with `python -m scripts.seed_case` (see its docstring) so every
-LLM answer is cached; during the demo upload one new file live.
-
-**Smoke test without keys**: `EVIDENCE_LLM=scripted` swaps in the test double (a banner says so).
-`EVIDENCE_DATA_DIR=/tmp/dd EVIDENCE_LLM=scripted python -m tests.test_deployment <uploads>` runs case creation,
-a WhatsApp zip upload, the background job, every page, Accept, rebuild, export and deletion.
-
-**Known limits of this setup** (fine for a demo, listed in the roadmap): single instance (SQLite + local
-volume, so no horizontal scaling); a job interrupted by a container restart is marked failed and must be
-re-run (cached calls make that cheap); basic-auth logins rather than SSO; data encrypted only if the server disk is.
-Back up the `evidence-data` volume.
-
----
-
-# Free showcase on Render (one-week demo)
-
-Render's free tier has no persistent disk and sleeps after 15 idle minutes, so the processed original dump is
-**baked into the Docker image** (`showcase/`) and copied into place at every start. Live uploads work and are
-processed on top of it; they last until the next restart, and **Settings → Reset to the showcase state**
-restores the original between rehearsals.
-
-1. **Process the original dump locally with real keys** (`python -m reason.run …`, see Layers 2–4), review
-   people and insights in the local UI, then bake it:
-   `python -m scripts.build_showcase ./case icip-trip --self-name … --self-alias … --self-email …`
-   (use exactly the same owner settings as for processing, otherwise the cache won't match).
-2. **Push to a private GitHub repo** (the showcase contains your documents).
-3. **Render → New → Blueprint →** pick the repo (`render.yaml`), set `EVIDENCE_PASSWORD`, `ANTHROPIC_API_KEY`,
-   `LLAMA_CLOUD_API_KEY`. You get `https://evidence-desk.onrender.com` with HTTPS.
-4. **Before presenting**: open the URL a couple of minutes early (cold start ≈ 1 min), log in, check Insights.
-
-**During the demo**: show QC → People → Timeline → Insights for the original dump; upload one new document
-(the itinerary screenshot or an email); "Process everything" only pays for the new content (the job log shows
-"N windows already cached"); the success banner and 🆕 markers show exactly what the new document added.
-
-**Limits to state**: data resets on restart/sleep; 512 MB RAM suits one or two small live uploads, not a new
-full dump; the free instance is slow to wake. `tests/test_showcase.py` exercises the whole flow.
+`--chat-tz` is your chat's timezone as hours from UTC (5.5 for India).
