@@ -20,3 +20,4 @@ DEMO_USER = os.environ.get("EVIDENCE_DEMO_USER", "")   # this user's cases are r
 SHOWCASE_DIR = Path(os.environ.get("EVIDENCE_SHOWCASE_DIR", Path(__file__).resolve().parents[1] / "showcase"))
 PASSWORD = os.environ.get("EVIDENCE_PASSWORD", "")        # in-app login when no reverse proxy is in front
 MASK_UI = os.environ.get("EVIDENCE_MASK_UI", "1") == "1"   # hide passport numbers, passwords etc. in citations
+TRUST_PROXY_HEADER = os.environ.get("EVIDENCE_TRUST_PROXY_HEADER") == "1"  # only set behind Caddy, never on Render

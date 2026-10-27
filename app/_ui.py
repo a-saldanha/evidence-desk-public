@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app import casefiles as cf                                    # noqa: E402
 from app.config import (USER_HEADER, LLM_BACKEND, BUDGET_USD_PER_USER_MONTH, DEMO_USER, MAX_UPLOAD_FILES,  # noqa: E402
-                        PASSWORD, MASK_UI)
+                        PASSWORD, MASK_UI, TRUST_PROXY_HEADER)
 from app import showcase                                            # noqa: E402
 from app.jobs import start_job, current_job, last_jobs, make_llm, PIPELINE  # noqa: E402
 from reason.workspace import Workspace                             # noqa: E402
@@ -45,7 +45,7 @@ def setup() -> Ctx:
     st.set_page_config(page_title="Evidence desk", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
 
-    _proxy_user = st.context.headers.get(USER_HEADER)
+    _proxy_user = st.context.headers.get(USER_HEADER) if TRUST_PROXY_HEADER else None
     if PASSWORD and not _proxy_user and not st.session_state.get("authed"):
         import hmac
         st.title("Evidence desk")
@@ -74,7 +74,7 @@ def setup() -> Ctx:
             with st.form("new_case"):
                 name = st.text_input("Case name", placeholder="icip-trip")
                 self_name = st.text_input("Whose documents are these?", placeholder="Full name")
-                aliases = st.text_input("Their names in chats (comma separated)", placeholder="e.g. Jane")
+                aliases = st.text_input("Their names in chats (comma separated)", placeholder="e.g. A!@n")
                 emails = st.text_area("Their email addresses (one per line)")
                 tz = st.number_input("Chat export clock (UTC offset, the phone's timezone at export)", value=5.5, step=0.5)
                 if st.form_submit_button("Create", disabled=READ_ONLY):
