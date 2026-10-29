@@ -10,3 +10,8 @@ deploy/.env
 deploy/users.caddy
 __pycache__/
 *.pyc
+
+# Local notes, not part of the repo
+ASSIGNMENT_SUGGESTIONS.md
+PROJECT_COMPARISON.md
+CLAUDE.md
